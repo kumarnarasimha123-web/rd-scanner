@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Post Office RD Scanner</title>
+
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+
+<style>
+
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:Arial,sans-serif;
+}
+
+body{
+background:#f4f6f8;
+padding:10px;
+}
+
+.container{
+max-width:900px;
+margin:auto;
+}
+
+.header{
+background:white;
+padding:15px;
+border-radius:10px;
+box-shadow:0 2px 8px rgba(0,0,0,.1);
+margin-bottom:10px;
+}
+
+.title{
+font-size:24px;
+font-weight:bold;
+margin-bottom:10px;
+}
+
+.summary{
+display:flex;
+gap:10px;
+flex-wrap:wrap;
+}
+
+.card{
+flex:1;
+min-width:150px;
+background:#eef4ff;
+padding:12px;
+border-radius:8px;
+}
+
+.card h3{
+font-size:14px;
+color:#666;
+}
+
+.card p{
+font-size:22px;
+font-weight:bold;
+margin-top:5px;
+}
+
+.controls{
+display:flex;
+gap:10px;
+margin:10px 0;
+flex-wrap:wrap;
+}
+
+button{
+padding:12px 18px;
+border:none;
+border-radius:8px;
+cursor:pointer;
+font-weight:bold;
+}
+
+.scanBtn{
+background:#2e7d32;
+color:white;
+}
+
+.exportBtn{
+background:#1565c0;
+color:white;
+}
+
+.clearBtn{
+background:#d32f2f;
+color:white;
+}
+
+.shareBtn{
+background:#00897b;
+color:white;
+}
+
+table{
+width:100%;
+border-collapse:collapse;
+background:white;
+border-radius:10px;
+overflow:hidden;
+}
+
+th{
+background:#1565c0;
+color:white;
+padding:10px;
+}
+
+td{
+padding:10px;
+border-bottom:1px solid #ddd;
+text-align:center;
+}
+
+.deleteBtn{
+background:red;
+color:white;
+padding:5px 10px;
+}
+
+video{
+width:100%;
+border-radius:10px;
+margin-top:10px;
+display:none;
+}
+
+canvas{
+display:none;
+}
+
+.modal{
+position:fixed;
+left:0;
+top:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,.6);
+display:none;
+justify-content:center;
+align-items:center;
+}
+
+.modal-content{
+background:white;
+padding:20px;
+border-radius:10px;
+width:90%;
+max-width:400px;
+}
+
+.modal-content input{
+width:100%;
+padding:10px;
+margin-top:5px;
+margin-bottom:15px;
+}
+
+.loading{
+display:none;
+margin-top:10px;
+font-weight:bold;
+color:#1565c0;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+
+<div class="title">
+Post Office RD Scanner
+</div>
+
+<div class="summary">
+
+<div class="card">
+<h3>Total Accounts</h3>
+<p id="accountCount">0</p>
+</div>
+
+<div class="card">
+<h3>Total Amount</h3>
+<p id="totalAmount">₹0</p>
+</div>
+
+</div>
+
+</div>
+
+<div class="controls">
+
+<button class="scanBtn"
+onclick="startCamera()">
+📷 Scan Passbook
+</button>
+
+<button class="exportBtn"
+onclick="exportExcel()">
+📄 Export Excel
+</button>
+
+<button class="shareBtn"
+onclick="shareExcel()">
+📤 Share
+</button>
+
+<button class="clearBtn"
+onclick="clearAll()">
+🗑 Clear All
+</button>
+
+</div>
+
+<video id="video" autoplay></video>
+
+<br>
+
+<button
+id="captureBtn"
+class="scanBtn"
+style="display:none;margin-top:10px;"
+onclick="captureImage()">
+Capture
+</button>
+
+<div class="loading"
+id="loading">
+Processing OCR...
+</div>
+
+<canvas id="canvas"></canvas>
+
+<table>
+
+<thead>
+<tr>
+<th>Sl No</th>
+<th>Account Number</th>
+<th>Amount</th>
+<th>Action</th>
+</tr>
+</thead>
+
+<tbody id="tableBody">
+
+</tbody>
+
+</table>
+
+</div>
+
+<div class="modal"
+id="editModal">
+
+<div class="modal-content">
+
+<h3>Confirm Data</h3>
+
+<label>
+Account Number
+</label>
+
+<input
+id="accountInput">
+
+<label>
+Monthly Installment
+</label>
+
+<input
+id="amountInput">
+
+<button
+class="scanBtn"
+onclick="saveRecord()">
+Save
+</button>
+
+</div>
+
+</div>
+<script>
+
+let records = [];
+
+let currentAccount = '';
+let currentAmount = 0;
+
+let currentExcelBlob = null;
+
+loadData();
+
+function startCamera() {
+
+  const video =
+  document.getElementById('video');
+
+  const captureBtn =
+  document.getElementById('captureBtn');
+
+  navigator.mediaDevices
+    .getUserMedia({
+      audio:false,
+       video:{
+       facingMode:{
+      ideal:'environment'
+      }
+    })
+    .then(stream => {
+
+      video.srcObject = stream;
+
+      video.style.display =
+      'block';
+
+      captureBtn.style.display =
+      'inline-block';
+    })
+    .catch(err => {
+
+      alert(
+      'Camera access denied');
+    });
+}
+
+async function captureImage() {
+
+  const video =
+  document.getElementById('video');
+
+  const canvas =
+  document.getElementById('canvas');
+
+  const loading =
+  document.getElementById('loading');
+
+  canvas.width =
+  video.videoWidth;
+
+  canvas.height =
+  video.videoHeight;
+
+  const ctx =
+  canvas.getContext('2d');
+
+  ctx.drawImage(
+    video,
+    0,
+    0
+  );
+
+  loading.style.display =
+  'block';
+
+  const imageData =
+  canvas.toDataURL(
+  'image/png');
+
+  try {
+
+    const result =
+    await Tesseract.recognize(
+      imageData,
+      'eng'
+    );
+
+    loading.style.display =
+    'none';
+
+    const text =
+    result.data.text;
+
+    parseRDText(text);
+
+  } catch(e){
+
+    loading.style.display =
+    'none';
+
+    alert(
+    'OCR Failed');
+  }
+}
+
+function parseRDText(text){
+
+  let account = '';
+
+  let amount = '';
+
+  const lines =
+  text.split('\n');
+
+  for(
+    let line of lines
+  ){
+
+    const lower =
+    line.toLowerCase();
+
+    if(
+      lower.includes(
+      'account number')
+    ){
+
+      account =
+      line.replace(
+      /[^0-9]/g,'');
+    }
+
+    if(
+      lower.includes(
+      'monthly installment')
+    ){
+
+      amount =
+      line.replace(
+      /[^0-9]/g,'');
+    }
+  }
+
+  if(
+    account === ''
+  ){
+
+    const accMatch =
+    text.match(
+    /\d{10,15}/);
+
+    if(accMatch){
+
+      account =
+      accMatch[0];
+    }
+  }
+
+  if(
+    amount === ''
+  ){
+
+    const amtMatch =
+    text.match(
+    /100|200|500|1000|2000|5000/);
+
+    if(amtMatch){
+
+      amount =
+      amtMatch[0];
+    }
+  }
+
+  currentAccount =
+  account;
+
+  currentAmount =
+  parseInt(
+  amount || '0');
+
+  document
+  .getElementById(
+  'accountInput')
+  .value =
+  currentAccount;
+
+  document
+  .getElementById(
+  'amountInput')
+  .value =
+  currentAmount;
+
+  document
+  .getElementById(
+  'editModal')
+  .style.display =
+  'flex';
+}
+
+function saveRecord(){
+
+  const account =
+  document
+  .getElementById(
+  'accountInput')
+  .value
+  .trim();
+
+  const amount =
+  parseInt(
+  document
+  .getElementById(
+  'amountInput')
+  .value || '0');
+
+  if(
+    account === ''
+  ){
+
+    alert(
+    'Account Number Required');
+
+    return;
+  }
+
+  const duplicate =
+  records.some(
+    r =>
+    r.account === account
+  );
+
+  if(
+    duplicate
+  ){
+
+    alert(
+    'Duplicate Account');
+
+    return;
+  }
+
+  records.push({
+
+    account:
+    account,
+
+    amount:
+    amount
+  });
+
+  saveLocal();
+
+  updateTable();
+
+  document
+  .getElementById(
+  'editModal')
+  .style.display =
+  'none';
+}
+
+function updateTable(){
+
+  const tbody =
+  document
+  .getElementById(
+  'tableBody');
+
+  tbody.innerHTML =
+  '';
+
+  let total = 0;
+
+  records.forEach(
+  (row,index)=>{
+
+    total +=
+    Number(row.amount);
+
+    tbody.innerHTML +=
+    `
+    <tr>
+
+      <td>
+      ${index+1}
+      </td>
+
+      <td>
+      ${row.account}
+      </td>
+
+      <td>
+      ₹${row.amount}
+      </td>
+
+      <td>
+
+      <button
+      class="deleteBtn"
+      onclick="deleteRow(${index})">
+
+      Delete
+
+      </button>
+
+      </td>
+
+    </tr>
+    `;
+  });
+
+  document
+  .getElementById(
+  'accountCount')
+  .innerText =
+  records.length;
+
+  document
+  .getElementById(
+  'totalAmount')
+  .innerText =
+  '₹' + total;
+}
+
+function deleteRow(index){
+
+  records.splice(
+  index,
+  1
+  );
+
+  saveLocal();
+
+  updateTable();
+}
+
+function clearAll(){
+
+  if(
+    !confirm(
+    'Clear all records?')
+  ){
+    return;
+  }
+
+  records = [];
+
+  saveLocal();
+
+  updateTable();
+}
+function exportExcel(){
+
+  if(records.length===0){
+
+    alert(
+    'No records found');
+
+    return;
+  }
+
+  const data = [];
+
+  data.push([
+    'Sl No',
+    'Account Number',
+    'Monthly Installment'
+  ]);
+
+  records.forEach(
+  (r,index)=>{
+
+    data.push([
+
+      index+1,
+
+      r.account,
+
+      r.amount
+    ]);
+  });
+
+  const ws =
+  XLSX.utils.aoa_to_sheet(
+  data);
+
+  const wb =
+  XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    ws,
+    'RD Accounts'
+  );
+
+  const excelBuffer =
+  XLSX.write(
+    wb,
+    {
+      bookType:'xlsx',
+      type:'array'
+    }
+  );
+
+  currentExcelBlob =
+  new Blob(
+  [excelBuffer],
+  {
+    type:
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+
+  const url =
+  URL.createObjectURL(
+  currentExcelBlob);
+
+  const a =
+  document.createElement(
+  'a');
+
+  a.href =
+  url;
+
+  a.download =
+  'RD_Accounts.xlsx';
+
+  a.click();
+
+  URL.revokeObjectURL(
+  url);
+}
+
+async function shareExcel(){
+
+  if(records.length===0){
+
+    alert(
+    'No records found');
+
+    return;
+  }
+
+  const data=[];
+
+  data.push([
+    'Sl No',
+    'Account Number',
+    'Monthly Installment'
+  ]);
+
+  records.forEach(
+  (r,index)=>{
+
+    data.push([
+
+      index+1,
+
+      r.account,
+
+      r.amount
+    ]);
+  });
+
+  const ws =
+  XLSX.utils.aoa_to_sheet(
+  data);
+
+  const wb =
+  XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    wb,
+    ws,
+    'RD Accounts'
+  );
+
+  const excelBuffer =
+  XLSX.write(
+    wb,
+    {
+      bookType:'xlsx',
+      type:'array'
+    }
+  );
+
+  const blob =
+  new Blob(
+  [excelBuffer],
+  {
+    type:
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+
+  const file =
+  new File(
+    [blob],
+    'RD_Accounts.xlsx',
+    {
+      type:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+  );
+
+  if(
+    navigator.share
+  ){
+
+    try{
+
+      await navigator.share({
+
+        title:
+        'RD Accounts',
+
+        files:[file]
+      });
+
+    }catch(e){
+
+      console.log(e);
+    }
+
+  }else{
+
+    alert(
+    'Sharing not supported on this device');
+  }
+}
+
+function saveLocal(){
+
+  localStorage.setItem(
+
+    'rd_records',
+
+    JSON.stringify(
+    records)
+  );
+}
+
+function loadData(){
+
+  const saved =
+
+  localStorage.getItem(
+  'rd_records');
+
+  if(saved){
+
+    records =
+    JSON.parse(saved);
+
+    updateTable();
+  }
+}
+
+window.onclick =
+function(event){
+
+  const modal =
+  document.getElementById(
+  'editModal');
+
+  if(
+    event.target === modal
+  ){
+
+    modal.style.display =
+    'none';
+  }
+};
+
+updateTable();
+
+</script>
+
+</body>
+
+</html>
